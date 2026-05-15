@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Minimal QGIS project file for NYC Subway Access Explorer.
+  Opens the three generated GeoJSON layers with default styling.
+  For full categorized styling, run `qgis/load_and_style.py` in the QGIS Python console.
+-->
+<qgis projectname="NYC Subway Access Explorer" version="3.34.0-Prizren">
+  <homePath path="."/>
+  <title>NYC Subway Access Explorer</title>
+  <projectCrs>
+    <spatialrefsys>
+      <wkt>GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433],AUTHORITY["EPSG","4326"]]</wkt>
+      <proj4>+proj=longlat +datum=WGS84 +no_defs</proj4>
+      <srsid>3452</srsid>
+      <srid>4326</srid>
+      <authid>EPSG:4326</authid>
+      <description>WGS 84</description>
+      <projectionacronym>longlat</projectionacronym>
+      <ellipsoidacronym>EPSG:7030</ellipsoidacronym>
+      <geographicflag>true</geographicflag>
+    </spatialrefsys>
+  </projectCrs>
+  <layer-tree-group>
+    <customproperties/>
+    <layer-tree-layer name="Subway stations" providerKey="ogr" source="../data/processed/stations.geojson" expanded="1" checked="Qt::Checked" id="stations_layer"/>
+    <layer-tree-layer name="Walk buffers" providerKey="ogr" source="../data/processed/buffers.geojson" expanded="1" checked="Qt::Checked" id="buffers_layer"/>
+    <layer-tree-layer name="Neighborhoods (access class)" providerKey="ogr" source="../data/processed/neighborhoods.geojson" expanded="1" checked="Qt::Checked" id="neighborhoods_layer"/>
+  </layer-tree-group>
+  <projectlayers>
+    <maplayer type="vector" geometry="Point" name="Subway stations">
+      <id>stations_layer</id>
+      <datasource>../data/processed/stations.geojson</datasource>
+      <provider>ogr</provider>
+      <layername>stations</layername>
+    </maplayer>
+    <maplayer type="vector" geometry="Polygon" name="Walk buffers">
+      <id>buffers_layer</id>
+      <datasource>../data/processed/buffers.geojson</datasource>
+      <provider>ogr</provider>
+      <layername>buffers</layername>
+    </maplayer>
+    <maplayer type="vector" geometry="Polygon" name="Neighborhoods (access class)">
+      <id>neighborhoods_layer</id>
+      <datasource>../data/processed/neighborhoods.geojson</datasource>
+      <provider>ogr</provider>
+      <layername>neighborhoods</layername>
+    </maplayer>
+  </projectlayers>
+  <mapcanvas name="theMapCanvas">
+    <units>degrees</units>
+    <extent>
+      <xmin>-74.27</xmin>
+      <ymin>40.49</ymin>
+      <xmax>-73.69</xmax>
+      <ymax>40.92</ymax>
+    </extent>
+    <destinationsrs>
+      <spatialrefsys>
+        <authid>EPSG:4326</authid>
+      </spatialrefsys>
+    </destinationsrs>
+  </mapcanvas>
+</qgis>
