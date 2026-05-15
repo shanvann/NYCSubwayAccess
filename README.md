@@ -146,12 +146,12 @@ Server-side route in `web/app/api/arrivals/route.ts`. It fetches all 8 NYCT GTFS
 | Web | Next.js 16 (App Router), TypeScript, Tailwind v4, React Leaflet 5, Leaflet, `gtfs-realtime-bindings` |
 | Basemap | CARTO Light (OpenStreetMap data) |
 
-## Stretch goals (not implemented)
+## Future enhancements
 
-- GTFS *schedule* analysis (service frequency, headway stats)
-- Bus coverage
-- Citi Bike integration
-- Walking-network distances via OSMnx / OpenRouteService
-- Demographic overlays (ACS data)
-- Search functionality
-- WebSocket push of arrivals instead of 30s polling
+- **GTFS *schedule* analysis (service frequency, headway stats)** — Today the model treats every station equally. A stop with trains every 4 minutes provides very different access from one served every 20 minutes; weighting coverage by service frequency would reflect actual usability, not just proximity.
+- **Bus coverage** — Many neighborhoods classified as "underserved" by subway are well-connected by bus (much of southeast Brooklyn, eastern Queens, the Bronx). Adding MTA bus stops + frequencies would give a more honest picture of overall transit access.
+- **Citi Bike integration** — Bike share extends the effective walk shed of every station, especially in Manhattan and inner Brooklyn. Overlaying dock locations would show where bike share meaningfully fills subway gaps.
+- **Walking-network distances via OSMnx / OpenRouteService** — Straight-line buffers don't know about the East River, highways, rail yards, or large parks. A real walk-network isochrone would meaningfully change coverage along waterfronts and in places like Inwood Hill or Marine Park.
+- **Demographic overlays (ACS Census data)** — Layering income, age, or race data on the access classes turns this from a transit map into an equity tool: which underserved neighborhoods are also lower-income or have higher car-free household rates?
+- **Station-level search** — With 262 neighborhoods and 496 stations, finding a specific one by panning is tedious; a search box would make the dashboard usable as a quick lookup, not just exploration.
+- **WebSocket push for live arrivals** — 30-second polling is fine for casual viewing, but a push channel would surface arrivals seconds sooner and reduce repeated work on the server side for users who leave the dashboard open all day.
