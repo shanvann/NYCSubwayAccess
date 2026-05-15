@@ -4,6 +4,8 @@ A local-only geospatial analytics project that analyzes NYC subway accessibility
 Python pipeline (GeoPandas / Shapely / PyProj) → GeoJSON → QGIS for inspection →
 Next.js + React Leaflet web app for interactive exploration.
 
+![NYC Subway Access Explorer dashboard](docs/screenshot.png)
+
 ## What it does
 
 For every NYC neighborhood (NTA 2020), compute the share of its area within a
