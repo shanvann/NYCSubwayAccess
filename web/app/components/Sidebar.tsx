@@ -1,7 +1,7 @@
 "use client";
 
 import type { Neighborhood } from "../types";
-import { CLASS_COLORS } from "../types";
+import { CLASS_COLORS, classifyCoverage, coverageForWalkMin } from "../types";
 import type { MapFilters } from "./Map";
 
 interface SidebarProps {
@@ -15,8 +15,7 @@ export default function Sidebar({ filters, setFilters, selected, onClearSelectio
   return (
     <aside className="w-[360px] shrink-0 h-full overflow-y-auto border-r border-zinc-200 bg-white">
       <div className="p-5 border-b border-zinc-200">
-        <h1 className="text-lg font-semibold tracking-tight">NYC Subway Access Explorer</h1>
-        <p className="text-xs text-zinc-500 mt-1">
+        <p className="text-xs text-zinc-500">
           Walking-distance buffers around MTA stations vs NYC neighborhoods.
         </p>
       </div>
@@ -38,7 +37,9 @@ export default function Sidebar({ filters, setFilters, selected, onClearSelectio
             </button>
           ))}
         </div>
-        <p className="text-xs text-zinc-500 mt-2">5-min ≈ 400m · 10-min ≈ 800m</p>
+        <p className="text-xs text-zinc-500 mt-2">
+          Network isochrone — per-edge speed varies, intersections add a crossing delay.
+        </p>
       </Section>
 
       <Section title="Filters">
@@ -73,14 +74,18 @@ export default function Sidebar({ filters, setFilters, selected, onClearSelectio
 
       <Section title="Selected neighborhood">
         {selected ? (
-          <NeighborhoodDetails selected={selected} onClear={onClearSelection} />
+          <NeighborhoodDetails
+            selected={selected}
+            walkMin={filters.walkMin}
+            onClear={onClearSelection}
+          />
         ) : (
           <p className="text-xs text-zinc-500">Click a neighborhood on the map to see details.</p>
         )}
       </Section>
 
       <div className="p-4 text-[11px] text-zinc-400 border-t border-zinc-100">
-        Data: MTA & NYC Open Data. Buffers are straight-line, not walking-network.
+        Data: MTA & NYC Open Data. Walk buffers are OSM pedestrian-network isochrones.
       </div>
     </aside>
   );
@@ -143,12 +148,15 @@ function Legend() {
 
 function NeighborhoodDetails({
   selected,
+  walkMin,
   onClear,
 }: {
   selected: Neighborhood;
+  walkMin: 5 | 10;
   onClear: () => void;
 }) {
   const p = selected.properties;
+  const cls = classifyCoverage(coverageForWalkMin(p, walkMin));
   return (
     <div className="text-sm">
       <div className="flex items-start justify-between gap-2">
@@ -169,9 +177,9 @@ function NeighborhoodDetails({
         <div className="font-medium">
           <span
             className="inline-block h-2 w-2 rounded-sm mr-1.5 align-middle"
-            style={{ background: CLASS_COLORS[p.access_class] }}
+            style={{ background: CLASS_COLORS[cls] }}
           />
-          {p.access_class}
+          {cls} <span className="text-zinc-400 font-normal">({walkMin}-min)</span>
         </div>
         <div className="text-zinc-500">Stations</div>
         <div>{p.station_count}</div>

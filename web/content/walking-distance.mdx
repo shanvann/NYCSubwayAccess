@@ -1,0 +1,204 @@
+# Walking distance — methodology
+
+How the pipeline turns "is this neighborhood close to a subway?" into a number.
+All logic lives in [`scripts/analyze.py`](../../scripts/analyze.py).
+
+## TL;DR
+
+For each subway station entrance, we walk the OpenStreetMap pedestrian network
+outward up to 5 / 10 minutes of **travel time**, where travel time is built
+from two ingredients:
+
+1. **Per-edge speed** — sidewalks at 4.8 km/h, arterials at 3.6 km/h, stairs at
+   1.8 km/h, etc.
+2. **Per-node crossing delay** — a fixed cost added when the route enters an
+   intersection: +30 s at arterials, +15 s at tertiary streets, 0 elsewhere.
+
+The reachable edges are buffered by 25 m (sidewalk reach), then unioned per
+station, then unioned across all stations to produce the 5-min and 10-min
+walk-sheds. A neighborhood's coverage % is the share of its area inside the
+walk-shed.
+
+## Inputs
+
+| Input | Source | Notes |
+|---|---|---|
+| Subway stations (centroids, ADA flag) | `data.ny.gov` `39hk-dx4f` | 496 features |
+| Subway entrances & exits (2024) | `data.ny.gov` `i9wp-a4ja` | 2,120 features, joined to stations on `gtfs_stop_id` |
+| NYC NTA 2020 boundaries | `data.cityofnewyork.us` `9nt8-h7nd` | 262 neighborhoods |
+| Pedestrian street network | OSM via OSMnx `network_type="walk"` | ~281k nodes, ~894k edges; cached locally |
+
+All geometries are reprojected to **EPSG:32118** (NAD83 / NY Long Island,
+meters) before any distance math, and reprojected back to WGS84 for output.
+
+## The model
+
+### 1. Entrances, not centroids
+
+A station is represented by **all of its real-world entrances** (filtered to
+`entry_allowed = YES`), not its single centroid. Reasons:
+
+- Big stations have entrances 100–200 m apart. Using one centroid loses that.
+  E.g. Atlantic Av–Barclays Ctr has 14+ entrances spanning two blocks.
+- The walk shed for a station is the **union** of the per-entrance walk sheds:
+  if you can reach any entrance in 5 min, you can reach the station in 5 min.
+
+If a station has no matching entrance in the source data (14 of 496 stations,
+mostly older/peripheral stops), the centroid is used as a fallback — preserving
+the previous behavior just for those.
+
+### 2. Per-edge speed
+
+Each OSM edge gets `travel_time = length_m / speed_ms` where `speed_ms` is
+chosen from its `highway` tag:
+
+| OSM `highway` | speed (km/h) | rationale |
+|---|---|---|
+| `footway`, `path`, `pedestrian`, `living_street` | 4.8 | baseline sidewalk / shared-use |
+| `residential`, `unclassified`, `service` | 4.8 | sidewalks expected |
+| `tertiary` | 4.5 | mild slowdown for traffic |
+| `secondary`, `primary`, `trunk` | 3.6 | arterials, often missing/narrow sidewalks |
+| `steps` | 1.8 | stairs |
+
+If the `highway` value is a list (OSM allows tag arrays), the slowest entry
+wins.
+
+### 3. Per-node crossing delay
+
+NetworkX has no built-in support for node costs in shortest paths, so we fold a
+per-node penalty into the `travel_time` of **every directed edge entering that
+node**. Each node is classified by the worst `highway` type among its incident
+edges:
+
+| Node class | Penalty |
+|---|---|
+| Any incident `trunk` / `primary` / `secondary` (arterials) | +30 s |
+| Else any incident `tertiary` | +15 s |
+| Else (residential / footway only) | 0 |
+
+In the loaded NYC walk graph, ~5.3% of nodes get the +30 s penalty and ~2.5%
+get +15 s — the rest are free.
+
+### 4. Isochrone construction
+
+For each entrance:
+
+1. Snap to the nearest pedestrian node (`ox.nearest_nodes`, batched across all
+   entrances).
+2. `nx.ego_graph(G, snapped_node, radius=walk_s, distance="travel_time")` —
+   the reachable subgraph within 300 s (5 min) or 600 s (10 min) of weighted
+   travel time.
+3. Collect the geometries of the reachable edges, union them, buffer by 25 m.
+
+Then per station: union the per-entrance polygons. Then dissolve across all
+stations into the 5-min and 10-min walk-sheds (one for all stations, one for
+ADA-only).
+
+### 5. Coverage
+
+For each neighborhood polygon, coverage at a given walk-time is the share of
+its area that falls inside the dissolved walk-shed for that walk-time:
+
+```
+coverage_pct = area(neighborhood ∩ walk_shed) / area(neighborhood) × 100
+```
+
+This is computed three times and stored on every neighborhood feature:
+
+- `coverage_5min_pct` — against the 5-min walk-shed (any station)
+- `coverage_10min_pct` — against the 10-min walk-shed (any station)
+- `coverage_ada_10min_pct` — against the 10-min walk-shed restricted to
+  ADA-accessible stations
+
+### 6. Classification
+
+Each neighborhood is classified into one of three tiers based on the **active
+walk-time selection** in the dashboard. Toggling between 5-min and 10-min
+re-classifies every neighborhood on the fly:
+
+| Class | Coverage threshold |
+|---|---|
+| well-served | ≥ 70% |
+| moderate | 30 – 70% |
+| underserved | &lt; 30% |
+
+So a neighborhood that's `well-served` at 10-min may drop to `moderate` or
+`underserved` at 5-min — the 5-min walk-shed is meaningfully smaller, so fewer
+neighborhoods clear the 70 % bar.
+
+Thresholds are **judgment calls**, not derived from anything external. 70 / 30
+was chosen to give a roughly tri-modal split of NYC at 10-min; with the
+current model the distribution is 72 / 64 / 126 (well / moderate / under).
+
+A few things to keep in mind when reading the class:
+
+- **Area-weighted, not population-weighted.** A neighborhood that's 70 % park
+  and 30 % homes scores the same as one that's 100 % homes — as long as the
+  same share of total area sits inside the walk-shed. A population-weighted
+  version would be more useful for equity questions but isn't in the model.
+- **Binary station presence, not density.** A neighborhood with one station
+  whose 10-min shed covers 80 % scores the same as one with six stations
+  covering 80 %. Station count is stored separately (`station_count`) and
+  shown in the sidebar but doesn't affect the class.
+- **The pipeline also writes a static `access_class` field** on every
+  neighborhood (computed against 10-min coverage at export time) so QGIS and
+  any other downstream consumer of `data/processed/neighborhoods.geojson`
+  still has a reasonable default. The dashboard ignores that field and
+  classifies live from the coverage numbers.
+
+## What changed vs. the old model
+
+The pre-refactor pipeline used a single per-station centroid, a constant
+4.8 km/h walking speed, and a network-distance radius (400 m / 800 m).
+End-to-end this dropped mean 10-min coverage from **55.3% → 36.8%** (≈ 18.5 pp).
+That's a big swing, and it's worth understanding why:
+
+- **Slower arterial edges** alone don't move the mean much (most edges are
+  footway / residential, so average speed only drops from 4.8 → 4.73 km/h).
+- **Intersection delays** are the dominant effect: a walker heading east-west
+  in Manhattan / inner Brooklyn crosses ~3 avenues in 10 min, which adds
+  ~90 s of penalty against a 600 s budget. That cuts the effective reach by
+  ~15 %, which in turn cuts the *area* by ~30 %.
+- **Per-entrance snapping** widens reach slightly at multi-entrance stations,
+  but doesn't offset the above.
+
+So the new numbers are more conservative but more honest.
+
+## Options considered
+
+Below are the alternatives that came up during design, and why each one is or
+isn't in the model. The shipped version is intentionally simple; the deferred
+options are all things we'd add if a specific decision needed them.
+
+### Shipped
+
+| Option | Decision | Why |
+|---|---|---|
+| Per-entrance snapping (vs. centroid) | **In** | Real entrances differ by 100s of meters at big stations. Cheap to implement with the existing data. |
+| Per-edge speed table | **In** | Most of the literature on walking-time models distinguishes sidewalk vs. arterial. Cheap, OSM data is right there. |
+| Per-node crossing delay | **In** | NYC waits at signalized arterial intersections are real and material. Folding into incoming-edge cost is the standard way to add node penalties to NetworkX shortest paths. |
+| Centroid fallback for stations without entrance data | **In** | 14 of 496 stations have no entrance row. Falling back keeps coverage for those stations rather than dropping them. |
+
+### Deferred
+
+| Option | Decision | Why not (yet) |
+|---|---|---|
+| **ADA-specific subgraph** (route only through elevators / step-free entrances + step-free sidewalk transitions) | Out | The entrance dataset has `entrance_type ∈ {Stair, Elevator, Easement, ...}` that *would* enable this, but the ADA story today is just "station-level ADA flag," which we already render as a separate buffer. A real ADA-routing model would also need step-free curb-cut data and elevator-outage feeds. Big scope, not justified by current product asks. |
+| **DOT sidewalk shed polygons** instead of OSM linestrings + 25 m buffer | Out | NYC DOT publishes sidewalk-extent polygons that are more accurate than buffering OSM. But OSM is good enough at this resolution and DOT's geometry is much heavier to process. Revisit if we ever care about ≤1-block precision. |
+| **Slope / Tobler's hiking function** (speed varies with grade) | Out | NYC is mostly flat — most edges would have ~0 grade and ~baseline speed. Wouldn't move coverage materially outside of upper Manhattan / parts of the Bronx. Not worth the elevation-data plumbing. |
+| **Signal-cycle timing** (model actual avg wait at each signal instead of a flat +30 s) | Out | DOT signal timing is partially available but joining it to OSM intersection nodes is messy. Flat +30 s is the right precision for a city-wide accessibility map. |
+| **Crossings only**, not pass-throughs (current model also penalizes straight-through sidewalk walks past arterials) | Out (acknowledged) | Detecting "the route actually crosses the arterial" vs. "the route walks past it on the sidewalk" requires turn-aware routing. In NYC's grid the bias is roughly uniform, so this systematically penalizes 10-min coverage by some fixed % without changing the *shape* of who's well- vs. under-served. |
+| **GTFS service-frequency weighting** (a station with trains every 4 min ≠ one every 20 min) | Out — listed in README as a future enhancement | Different problem (service availability, not walking access). Belongs in a separate layer on top of this one. |
+
+## How often this should re-run
+
+- MTA stations + entrances: changes on the order of years.
+- NTA boundaries: revised on a roughly decennial cycle (2010 → 2020).
+- OSM walk graph: cached; refresh manually maybe once a year.
+
+So in practice this is a **few-times-a-year** pipeline, not a hot path.
+The full run takes ~3 hours on a laptop (494 stations × ~4 entrances × 2 radii
+≈ 4,100 ego-graph traversals over a 281 k-node graph). If we ever want it
+faster, the lowest-hanging optimization is replacing per-entrance `ego_graph`
+with a single multi-source `dijkstra_path_length` and reconstructing the
+reachable edge set manually — but at this cadence, it's not worth doing.

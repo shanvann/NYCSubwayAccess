@@ -1,7 +1,8 @@
-"""Fetch MTA subway stations and NYC neighborhood polygons from public open-data portals.
+"""Fetch MTA subway stations, entrances, and NYC neighborhood polygons from public open-data portals.
 
 Sources:
 - MTA Subway Stations (with ADA flag): https://data.ny.gov/resource/39hk-dx4f
+- MTA Subway Entrances and Exits 2024 (joins to stations via gtfs_stop_id): https://data.ny.gov/resource/i9wp-a4ja
 - NYC Neighborhood Tabulation Areas (NTAs) 2020: https://data.cityofnewyork.us/resource/9nt8-h7nd
 
 Writes raw GeoJSON to data/raw/.
@@ -25,6 +26,7 @@ RAW.mkdir(parents=True, exist_ok=True)
 
 SOURCES = {
     "stations.geojson": "https://data.ny.gov/api/geospatial/39hk-dx4f?method=export&format=GeoJSON",
+    "entrances.geojson": "https://data.ny.gov/api/geospatial/i9wp-a4ja?method=export&format=GeoJSON",
     "neighborhoods.geojson": "https://data.cityofnewyork.us/api/geospatial/9nt8-h7nd?method=export&format=GeoJSON",
 }
 

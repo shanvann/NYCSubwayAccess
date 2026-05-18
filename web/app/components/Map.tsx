@@ -4,14 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { GeoJSON, MapContainer, TileLayer, CircleMarker, Tooltip } from "react-leaflet";
 import L from "leaflet";
 import type {
-  AccessClass,
   BufferFC,
   Neighborhood,
   NeighborhoodFC,
   Station,
   StationFC,
 } from "../types";
-import { CLASS_COLORS } from "../types";
+import { CLASS_COLORS, classifyCoverage, coverageForWalkMin } from "../types";
 
 export interface MapFilters {
   showStations: boolean;
@@ -81,6 +80,26 @@ export default function Map({
     return stations.features.filter((f) => (filters.adaOnly ? f.properties.ada >= 1 : true));
   }, [stations, filters.adaOnly]);
 
+  const summary = useMemo(() => {
+    if (!neighborhoods) return null;
+    const counts: Record<"well-served" | "moderate" | "underserved", number> = {
+      "well-served": 0,
+      moderate: 0,
+      underserved: 0,
+    };
+    let totalCov = 0;
+    for (const f of neighborhoods.features) {
+      const cov = coverageForWalkMin(f.properties, filters.walkMin);
+      counts[classifyCoverage(cov)]++;
+      totalCov += cov;
+    }
+    return {
+      counts,
+      mean: totalCov / neighborhoods.features.length,
+      total: neighborhoods.features.length,
+    };
+  }, [neighborhoods, filters.walkMin]);
+
   if (error) {
     return (
       <div className="h-full w-full flex items-center justify-center p-6 text-red-600">
@@ -90,6 +109,7 @@ export default function Map({
   }
 
   return (
+    <div className="relative h-full w-full">
     <MapContainer center={NYC_CENTER} zoom={11} className="h-full w-full" preferCanvas>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
@@ -102,7 +122,7 @@ export default function Map({
           data={neighborhoods}
           style={(feat) => {
             const f = feat as Neighborhood;
-            const cls = f.properties.access_class as AccessClass;
+            const cls = classifyCoverage(coverageForWalkMin(f.properties, filters.walkMin));
             const isSelected = f.properties.nta_code === selectedNtaCode;
             return {
               fillColor: CLASS_COLORS[cls] ?? "#888",
@@ -114,11 +134,12 @@ export default function Map({
           onEachFeature={(feature, layer) => {
             const f = feature as Neighborhood;
             const p = f.properties;
+            const cls = classifyCoverage(coverageForWalkMin(p, filters.walkMin));
             const html = `
               <div style="font-size:12px;line-height:1.35">
                 <strong>${p.name ?? "Unknown"}</strong><br/>
                 ${p.borough ?? ""}<br/>
-                <em>${p.access_class}</em><br/>
+                <em>${cls}</em> <span style="color:#666">(${filters.walkMin}-min)</span><br/>
                 5-min: ${p.coverage_5min_pct.toFixed(1)}%
                 &nbsp;·&nbsp;
                 10-min: ${p.coverage_10min_pct.toFixed(1)}%
@@ -184,5 +205,38 @@ export default function Map({
           );
         })}
     </MapContainer>
+    {summary && (
+      <div className="absolute bottom-4 left-4 z-[1000] bg-white/95 backdrop-blur-sm border border-zinc-200 rounded-md shadow-md p-3 text-xs min-w-[200px] pointer-events-auto">
+        <div className="font-semibold text-zinc-900 mb-2">
+          {filters.walkMin}-min coverage summary
+        </div>
+        <div className="space-y-1">
+          {(["well-served", "moderate", "underserved"] as const).map((cls) => (
+            <div key={cls} className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-sm"
+                  style={{ background: CLASS_COLORS[cls] }}
+                />
+                <span className="text-zinc-700">{cls}</span>
+              </div>
+              <span className="font-medium text-zinc-900 tabular-nums">
+                {summary.counts[cls]}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 pt-2 border-t border-zinc-100 text-zinc-500 flex items-center justify-between">
+          <span>Mean coverage</span>
+          <span className="text-zinc-900 font-medium tabular-nums">
+            {summary.mean.toFixed(1)}%
+          </span>
+        </div>
+        <div className="text-[10px] text-zinc-400 mt-0.5">
+          {summary.total} neighborhoods
+        </div>
+      </div>
+    )}
+    </div>
   );
 }

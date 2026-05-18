@@ -9,9 +9,14 @@ Next.js + React Leaflet web app for interactive exploration.
 ## What it does
 
 For every NYC neighborhood (NTA 2020), compute the share of its area within a
-**5-minute (~400m)** and **10-minute (~800m)** walk of any MTA subway station,
+**5-minute** and **10-minute** walk of any MTA subway station entrance,
 classify each neighborhood as **well-served / moderate / underserved**, and
 visualize the result.
+
+Walk times are true OSM network isochrones — per-edge speed varies with the
+street type (sidewalks vs. arterials vs. stairs) and a fixed crossing delay is
+applied at intersection nodes. See [`web/content/walking-distance.mdx`](web/content/walking-distance.mdx)
+for the full model and rationale.
 
 Live ADA-accessible station data is included so you can also see *step-free* coverage.
 
@@ -20,7 +25,7 @@ Live ADA-accessible station data is included so you can also see *step-free* cov
 ```
 nyc-subway-access/
 ├── scripts/                    # Python pipeline
-│   ├── fetch_data.py           # Download MTA stations + NYC NTA polygons
+│   ├── fetch_data.py           # Download MTA stations + entrances + NTA polygons
 │   ├── analyze.py              # Reproject, buffer, coverage, classify, export
 │   └── requirements.txt
 ├── data/
@@ -52,10 +57,12 @@ You should see a summary like:
 Stations:           496
   ADA-accessible:   169
 Neighborhoods:      262
-  well-served    128
-  moderate       40
-  underserved    94
-Mean 10-min coverage: 55.3%
+  well-served    72
+  moderate       64
+  underserved    126
+
+Mean 5-min coverage:  17.6%
+Mean 10-min coverage: 36.8%
 ```
 
 ### Output files (all WGS84 / EPSG:4326)
@@ -63,15 +70,25 @@ Mean 10-min coverage: 55.3%
 | File | Geometry | Per-feature properties |
 |---|---|---|
 | `data/processed/stations.geojson` | Point | `name`, `lines`, `ada`, `gtfs_stop_id` |
-| `data/processed/buffers.geojson` | Polygon (dissolved) | `walk_min` (5\|10), `ada_only`, `radius_m` |
+| `data/processed/buffers.geojson` | Polygon (dissolved) | `walk_min` (5\|10), `ada_only`, `radius_s` |
 | `data/processed/neighborhoods.geojson` | (Multi)Polygon | `name`, `borough`, `nta_code`, `coverage_5min_pct`, `coverage_10min_pct`, `coverage_ada_10min_pct`, `access_class`, `station_count` |
 
 ### Pipeline details
 
 - Reprojects to **EPSG:32118** (NAD83 / New York Long Island, meters) for accurate
-  buffer / area math, then reprojects outputs back to WGS84 for web rendering.
-- Buffers are **straight-line** (geodesic euclidean), not walking-network distances —
-  see stretch goals.
+  distance / area math, then reprojects outputs back to WGS84 for web rendering.
+- Walk buffers are **true network isochrones** with a time-weighted edge cost:
+  each station's real-world entrances are snapped to the nearest OSM pedestrian
+  node, the graph is walked outward at 5 / 10 minutes of *travel time*, and the
+  reachable street edges are buffered by 25m. Per-edge speed varies by OSM
+  `highway` type (sidewalks 4.8 km/h, arterials 3.6 km/h, stairs 1.8 km/h) and a
+  fixed crossing delay (+30s arterials, +15s tertiary) is folded into the
+  travel-time of every edge entering an intersection node. Full model in
+  [`web/content/walking-distance.mdx`](web/content/walking-distance.mdx).
+- The OSM walk graph is downloaded once (~5–10 min on the first `analyze.py` run)
+  and cached at `data/raw/nyc_walk_network.graphml`. Subsequent runs reuse it.
+  Travel-time weights are recomputed in memory each run, so the cached graphml
+  stays untouched.
 - Classification thresholds (% of neighborhood area within a 10-min walk):
   - `well-served`  ≥ 70%
   - `moderate`     30–70%
@@ -80,7 +97,10 @@ Mean 10-min coverage: 55.3%
 ### Data sources
 
 - MTA Subway Stations: `data.ny.gov` resource `39hk-dx4f` (includes ADA flag)
+- MTA Subway Entrances & Exits 2024: `data.ny.gov` resource `i9wp-a4ja`
+  (joins to stations on `gtfs_stop_id`)
 - NYC NTA 2020 boundaries: `data.cityofnewyork.us` resource `9nt8-h7nd`
+- Pedestrian street network: OpenStreetMap (via OSMnx `network_type="walk"`)
 
 ## 2. Inspect in QGIS
 
@@ -114,7 +134,7 @@ npm install        # only needed the first time
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3305.
 
 The web app loads GeoJSON from `web/public/data/`, which is a symlink to
 `data/processed/`, so re-running the pipeline automatically updates the map on refresh.
@@ -141,7 +161,7 @@ Server-side route in `web/app/api/arrivals/route.ts`. It fetches all 8 NYCT GTFS
 
 | Layer | Tools |
 |---|---|
-| Pipeline | Python 3.12, GeoPandas, Shapely, PyProj, pandas, certifi |
+| Pipeline | Python 3.12, GeoPandas, Shapely, PyProj, pandas, certifi, OSMnx, NetworkX |
 | Desktop GIS | QGIS 3.x (PyQGIS for styling) |
 | Web | Next.js 16 (App Router), TypeScript, Tailwind v4, React Leaflet 5, Leaflet, `gtfs-realtime-bindings` |
 | Basemap | CARTO Light (OpenStreetMap data) |
@@ -151,7 +171,6 @@ Server-side route in `web/app/api/arrivals/route.ts`. It fetches all 8 NYCT GTFS
 - **GTFS *schedule* analysis (service frequency, headway stats)** — Today the model treats every station equally. A stop with trains every 4 minutes provides very different access from one served every 20 minutes; weighting coverage by service frequency would reflect actual usability, not just proximity.
 - **Bus coverage** — Many neighborhoods classified as "underserved" by subway are well-connected by bus (much of southeast Brooklyn, eastern Queens, the Bronx). Adding MTA bus stops + frequencies would give a more honest picture of overall transit access.
 - **Citi Bike integration** — Bike share extends the effective walk shed of every station, especially in Manhattan and inner Brooklyn. Overlaying dock locations would show where bike share meaningfully fills subway gaps.
-- **Walking-network distances via OSMnx / OpenRouteService** — Straight-line buffers don't know about the East River, highways, rail yards, or large parks. A real walk-network isochrone would meaningfully change coverage along waterfronts and in places like Inwood Hill or Marine Park.
 - **Demographic overlays (ACS Census data)** — Layering income, age, or race data on the access classes turns this from a transit map into an equity tool: which underserved neighborhoods are also lower-income or have higher car-free household rates?
 - **Station-level search** — With 262 neighborhoods and 496 stations, finding a specific one by panning is tedious; a search box would make the dashboard usable as a quick lookup, not just exploration.
 - **WebSocket push for live arrivals** — 30-second polling is fine for casual viewing, but a push channel would surface arrivals seconds sooner and reduce repeated work on the server side for users who leave the dashboard open all day.
