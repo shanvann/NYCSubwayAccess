@@ -22,7 +22,7 @@ export interface StationProps {
 
 export interface BufferProps {
   walk_min: 5 | 10;
-  radius_m: number;
+  radius_s: number;
   ada_only: boolean;
 }
 
@@ -39,3 +39,18 @@ export const CLASS_COLORS: Record<AccessClass, string> = {
   moderate: "#e08a1a",
   underserved: "#b62525",
 };
+
+// Thresholds mirror scripts/analyze.py — kept in sync by convention. If you
+// change one side, change the other.
+export const WELL_SERVED_PCT = 70;
+export const MODERATE_PCT = 30;
+
+export function classifyCoverage(pct: number): AccessClass {
+  if (pct >= WELL_SERVED_PCT) return "well-served";
+  if (pct >= MODERATE_PCT) return "moderate";
+  return "underserved";
+}
+
+export function coverageForWalkMin(p: NeighborhoodProps, walkMin: 5 | 10): number {
+  return walkMin === 5 ? p.coverage_5min_pct : p.coverage_10min_pct;
+}
